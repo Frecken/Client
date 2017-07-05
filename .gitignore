@@ -1,0 +1,9 @@
+.vs/
+packages/
+Debug/
+Release/
+OCV3/Debug/
+OCV3/Release/
+OCV3/Generated Files/
+Client/bin/
+Client/obj/

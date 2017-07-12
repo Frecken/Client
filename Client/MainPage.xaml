@@ -8,7 +8,8 @@
     mc:Ignorable="d" Loaded="Page_Loaded" Unloaded="Page_Unloaded">
 
     <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
-        <CaptureElement x:Name="previewElement" Width="320" Height="240" HorizontalAlignment="Left" Visibility="Visible" Margin="0,0,0,0"/>
-        <Image x:Name="captureImage" Width="320" Height="240" Visibility="Visible" Margin="960,0,0,0"/>
+        <CaptureElement x:Name="previewElement" Width="320" Height="240" HorizontalAlignment="Left" Visibility="Visible" Margin="0,0,0,0" FocusVisualPrimaryBrush="White"/>
+        <RadioButton x:Name="radioButton1" Content="INC" HorizontalAlignment="Left" Margin="35,500,0,0" VerticalAlignment="Top" IsChecked="True"/>
+        <RadioButton x:Name="radioButton2" Content="DEC" HorizontalAlignment="Left" Margin="35,550,0,0" VerticalAlignment="Top"/>
     </Grid>
 </Page>

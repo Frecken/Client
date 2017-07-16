@@ -2,59 +2,50 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Runtime.InteropServices.WindowsRuntime;
-using System.Threading.Tasks;
-using Windows.Devices.Enumeration;
-using Windows.Foundation;
-using Windows.Foundation.Collections;
-using Windows.Graphics.Imaging;
-using Windows.Media;
 using Windows.Media.Capture;
 using Windows.Media.MediaProperties;
 using Windows.Storage;
-using Windows.Storage.Streams;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
-using Windows.UI.Xaml.Controls.Primitives;
-using Windows.UI.Xaml.Data;
-using Windows.UI.Xaml.Input;
-using Windows.UI.Xaml.Media;
-using Windows.UI.Xaml.Media.Imaging;
-using Windows.UI.Xaml.Navigation;
-using Windows.Storage.FileProperties;
-using Windows.Storage.Pickers;
-using Matrix;
 using Matrix.Xmpp.Client;
+using Matrix.Xmpp.Sasl;
 
 namespace Client
 {
-    /// <summary>
-    /// Пустая страница, которую можно использовать саму по себе или для перехода внутри фрейма.
-    /// </summary>
     public sealed partial class MainPage : Page
     {
-        public MainPage()
-        {
-            this.InitializeComponent();
-        }
-
         bool latchActive = false;
-        short lockedFrames = 0;
+        short framesLeftToSkip = 0;
         bool barcodeDetectedOld = false;
-
         static string workMode = "INC";
 
-        private FileTransferManager fm;
-        private string sid = "";
-
-        static XmppClient clientXMPP;
-        string hostname;
-        string username;
-        string password;
+        FileTransferManager fm = new FileTransferManager();
+        XmppClient xmppClient = new XmppClient();
 
         DispatcherTimer dispatcherTimer;
 
         MediaCapture mediaCapture;
+
+        public MainPage()
+        {
+            InitializeComponent();
+
+            xmppClient.Resource = "client";
+            xmppClient.Port = 5222;
+            xmppClient.StartTls = true;
+            xmppClient.OnLogin += new EventHandler<Matrix.EventArgs>(xmppClient_OnLogin);
+            xmppClient.OnAuthError += new EventHandler<SaslEventArgs>(xmppClient_OnAuthError);
+            xmppClient.OnClose += new EventHandler<Matrix.EventArgs>(xmppClient_OnClose);
+
+            fm.XmppClient = xmppClient;
+            fm.Blocking = true;
+            fm.OnDeny += fm_OnDeny;
+            fm.OnAbort += fm_OnAbort;
+            fm.OnError += fm_OnError;
+            fm.OnEnd += fm_OnEnd;
+            fm.OnStart += fm_OnStart;
+            fm.OnProgress += fm_OnProgress;
+        }
 
         private async void Page_Loaded(object sender, RoutedEventArgs e)
         {
@@ -76,12 +67,19 @@ namespace Client
                             i++;
                         }
 
-                        hostname = xmppConfig[0];
-                        username = xmppConfig[1];
-                        password = xmppConfig[2];
+                        xmppClient.SetXmppDomain(xmppConfig[0]);
+                        xmppClient.SetUsername(xmppConfig[1]);
+                        xmppClient.Password = xmppConfig[2];
                     }
                 }
             }
+
+            //Лицензия для библиотеки Matrix XMPP
+            string lic = @"";
+            Matrix.License.LicenseManager.SetLicense(lic);
+
+            //Соединение с сервером XMPP
+            xmppClient.Open();
 
             //Подготовка к захвату кадров
             mediaCapture = new MediaCapture();
@@ -99,100 +97,6 @@ namespace Client
             DispatcherTimerSetup();
         }
 
-        public void DispatcherTimerSetup()
-        {
-            //Настройка частоты вызова обработчика кадров
-            dispatcherTimer = new DispatcherTimer();
-            dispatcherTimer.Tick += DispatcherTimer_Tick;
-            dispatcherTimer.Interval = new TimeSpan(0, 0, 0, 0, 33);
-            dispatcherTimer.Start();
-        }
-
-        private async void DispatcherTimer_Tick(object sender, object e)
-        {
-            try
-            {
-                //Подготовка к получению кадра
-                VideoEncodingProperties previewProperties = mediaCapture.VideoDeviceController.GetMediaStreamProperties(MediaStreamType.VideoPreview) as VideoEncodingProperties;
-
-                using (VideoFrame videoFrame = new VideoFrame(BitmapPixelFormat.Bgra8,
-                                                              (int)previewProperties.Width,
-                                                              (int)previewProperties.Height))
-                {
-                    //Получение кадра
-                    using (VideoFrame currentFrame = await mediaCapture.GetPreviewFrameAsync(videoFrame))
-                    {
-                        //Подготовка к работе с кадром
-                        using (SoftwareBitmap previewFrame = currentFrame.SoftwareBitmap)
-                        {
-                            WriteableBitmap writBitmap = new WriteableBitmap(previewFrame.PixelWidth,
-                                                                             previewFrame.PixelHeight);
-                            previewFrame.CopyToBuffer(writBitmap.PixelBuffer);
-
-                            //Проверка наличия штрих-кода в кадре
-                            var cv = new OCV3.OCV3_Class();
-                            bool barcodeDetected = cv.DetectBarcode(writBitmap);
-
-                            //Работа с защелкой
-                            if (barcodeDetected == true)
-                            {
-                                if (latchActive == true)
-                                {
-                                    if (lockedFrames < 10)
-                                    {
-                                        lockedFrames++;
-                                    }
-                                    else
-                                    {
-                                        latchActive = false;
-                                        lockedFrames = 0;
-                                    }
-                                }
-                                else
-                                {
-                                    if (barcodeDetectedOld == true)
-                                    {
-
-                                    }
-                                    else
-                                    {
-                                        latchActive = true;
-                                        lockedFrames = 0;
-
-                                        //Подготовка к отправке кадра на сервер
-                                        Jid jid = new Jid(username,
-                                                          hostname,
-                                                          "server");
-                                        StorageFile savedStorageFile = await WriteableBitmapToStorageFile(writBitmap,
-                                                                                                          FileFormat.Jpeg);
-                                        if (radioButton1.IsChecked == true)
-                                        {
-                                            workMode = "INC";
-                                        }
-                                        else if (radioButton2.IsChecked == true)
-                                        {
-                                            workMode = "DEC";
-                                        }
-
-                                        //Отправка кадра на сервер
-                                        sid = await fm.Send(jid,
-                                                            savedStorageFile,
-                                                            workMode);
-                                    }
-                                }
-                            }
-
-                            barcodeDetectedOld = barcodeDetected;
-                        }
-                    }
-                }
-            }
-            catch (Exception)
-            {
-
-            }
-        }
-
         private async void Page_Unloaded(object sender, RoutedEventArgs e)
         {
             //Остановка обработчика кадров
@@ -200,69 +104,9 @@ namespace Client
 
             //Остановка захвата кадров
             await mediaCapture.StopPreviewAsync();
+
+            //Остановка работы XMPP
+            xmppClient.Close();
         }
-
-        private async Task<StorageFile> WriteableBitmapToStorageFile(WriteableBitmap WB, FileFormat fileFormat)
-        {
-            string dateTime = DateTime.Now.ToString("yyyy-MM-dd-HH-mm-ss");
-            string FileName = "img-" + dateTime + ".";
-            Guid BitmapEncoderGuid = BitmapEncoder.JpegEncoderId;
-
-            switch (fileFormat)
-            {
-                case FileFormat.Jpeg:
-                    FileName += "jpeg";
-                    BitmapEncoderGuid = BitmapEncoder.JpegEncoderId;
-                    break;
-                case FileFormat.Png:
-                    FileName += "png";
-                    BitmapEncoderGuid = BitmapEncoder.PngEncoderId;
-                    break;
-                case FileFormat.Bmp:
-                    FileName += "bmp";
-                    BitmapEncoderGuid = BitmapEncoder.BmpEncoderId;
-                    break;
-                case FileFormat.Tiff:
-                    FileName += "tiff";
-                    BitmapEncoderGuid = BitmapEncoder.TiffEncoderId;
-                    break;
-                case FileFormat.Gif:
-                    FileName += "gif";
-                    BitmapEncoderGuid = BitmapEncoder.GifEncoderId;
-                    break;
-            }
-
-            var file = await ApplicationData.Current.TemporaryFolder.CreateFileAsync(FileName, CreationCollisionOption.GenerateUniqueName);
-
-            using (IRandomAccessStream stream = await file.OpenAsync(FileAccessMode.ReadWrite))
-            {
-                BitmapEncoder encoder = await BitmapEncoder.CreateAsync(BitmapEncoderGuid, stream);
-
-                System.IO.Stream pixelStream = WB.PixelBuffer.AsStream();
-                byte[] pixels = new byte[pixelStream.Length];
-                await pixelStream.ReadAsync(pixels, 0, pixels.Length);
-
-                encoder.SetPixelData(BitmapPixelFormat.Bgra8,
-                                     BitmapAlphaMode.Ignore,
-                                     (uint)WB.PixelWidth,
-                                     (uint)WB.PixelHeight,
-                                     96.0,
-                                     96.0,
-                                     pixels);
-
-                await encoder.FlushAsync();
-            }
-            return file;
-        }
-
-        private enum FileFormat
-        {
-            Jpeg,
-            Png,
-            Bmp,
-            Tiff,
-            Gif
-        }
-
     }
 }

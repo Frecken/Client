@@ -110,9 +110,9 @@ namespace Client
                                         }
 
                                         //Отправка кадра на сервер
-                                        string send = await fm.Send(jid,
-                                                                    savedStorageFile,
-                                                                    workMode);
+                                        await fm.Send(jid,
+                                                      savedStorageFile,
+                                                      workMode);
                                     }
                                 }
                             }
